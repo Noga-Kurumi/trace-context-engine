@@ -1,47 +1,51 @@
 # TRACE
 
-Temporal Retrieval & Activity Context Engine.
+**Temporal Retrieval & Activity Context Engine**
 
-TRACE captura actividad local de Windows, la persiste como eventos de texto en
-SQLite y ofrece recuperación por palabras clave, rango temporal y MCP.
+TRACE captures local Windows activity, persists it as text events in SQLite, and provides retrieval via keywords, time ranges, and MCP (Model Context Protocol).
 
-Durante el desarrollo se instala como dependencia editable:
+## Installation
+
+For development, install it as an editable dependency:
 
 ```powershell
 pip install -e .
+
 ```
 
-TRACE puede ser consumido por cualquier aplicación local que necesite contexto
-de actividad del equipo, incluyendo asistentes de IA.
+TRACE can be consumed by any local application needing system activity context, including AI assistants.
 
-El nÃºcleo de TRACE es multiplataforma: SQLite, el timeline y la bÃºsqueda no
-requieren APIs especÃ­ficas del sistema operativo. Los recolectores nativos de
-Windows son opcionales:
+The TRACE core is cross-platform: SQLite storage, the timeline, and search logic do not require OS-specific APIs. Native Windows collectors are optional:
 
 ```powershell
 pip install -e ".[windows]"
+
 ```
 
-Uso bÃ¡sico:
+## Basic Usage
 
 ```python
 from trace_engine import TraceEngine
 
 with TraceEngine() as trace:
-    trace.insert("clipboard", "texto copiado")
-    resultados = trace.search("texto")
+    trace.insert("clipboard", "copied text")
+    results = trace.search("text")
+
 ```
 
-En Linux y macOS TRACE funciona como motor de persistencia y recuperaciÃ³n.
-Los recolectores especÃ­ficos de cada plataforma pueden ser aportados por la
-aplicaciÃ³n o mediante futuros plugins.
+On Linux and macOS, TRACE operates as a persistence and retrieval engine. Platform-specific collectors can be provided by the host application or through future plugins.
 
-Para evitar duplicar modelos de transcripciÃ³n, una aplicaciÃ³n que ya disponga
-de un transcriptor puede inyectarlo:
+## Custom Transcriber Injection
+
+To avoid duplicating transcription models in memory, an application that already maintains a transcriber can inject it directly:
 
 ```python
-trace = TraceEngine(transcriber=transcriptor_existente)
+trace = TraceEngine(transcriber=existing_transcriber)
+
 ```
 
-El objeto debe exponer `transcribe(audio)`. El recolector de reuniones usarÃ¡
-esa instancia y no cargarÃ¡ otro modelo Whisper.
+The injected object must expose a `transcribe(audio)` method. The meeting collector will reuse this instance instead of spinning up an extra Whisper model.
+
+```
+
+```
