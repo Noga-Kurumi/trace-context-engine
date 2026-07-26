@@ -27,6 +27,7 @@ proceso principal (y con lectores externos por stdio).
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -129,6 +130,35 @@ def get_timeline_by_time_range(start_time: str, end_time: str, limit: int = 50) 
     if not rows:
         return "Sin registros en el timeline en esa franja horaria."
     return TimelineDB.format_results(rows)
+
+
+@mcp_server.tool()
+def get_window_sessions_by_time_range(start_time: str, end_time: str,
+                                      limit: int = 50) -> str:
+    """Devuelve las aplicaciones y ventanas activas durante una franja.
+
+    Incluye inicio, fin y duración aproximada para reconstruir la secuencia de
+    trabajo del usuario con más precisión que eventos aislados.
+    """
+    try:
+        t0 = _parse_time(start_time)
+        t1 = _parse_time(end_time)
+    except ValueError as e:
+        return f"Error de parámetros: {e}"
+    if t1 < t0:
+        t0, t1 = t1, t0
+    rows = _get_db().get_window_sessions(t0, t1, limit=limit)
+    if not rows:
+        return "Sin sesiones de ventana en esa franja horaria."
+    lines = []
+    for _id, started, ended, app_name, title in rows:
+        finish = ended if ended is not None else time.time()
+        duration = max(0.0, finish - started)
+        start_label = datetime.fromtimestamp(started).strftime("%H:%M:%S")
+        end_label = datetime.fromtimestamp(finish).strftime("%H:%M:%S")
+        lines.append(f"[{start_label}-{end_label}, {duration:.0f}s] "
+                     f"{app_name} - {title}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------- ejecución en-proceso

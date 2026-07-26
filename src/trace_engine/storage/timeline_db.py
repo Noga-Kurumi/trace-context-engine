@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS timeline (
 );
 CREATE INDEX IF NOT EXISTS idx_timeline_timestamp ON timeline(timestamp);
 
+CREATE TABLE IF NOT EXISTS window_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    app_name TEXT NOT NULL,
+    window_title TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_window_sessions_time
+    ON window_sessions(started_at, ended_at);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS timeline_fts USING fts5(
     content, app_name, window_title,
     content='timeline', content_rowid='id'
@@ -122,12 +132,45 @@ class TimelineDB:
         cutoff = time.time() - float(retention_hours) * 3600
         with self._lock:
             cur = self._conn.execute("DELETE FROM timeline WHERE timestamp < ?", (cutoff,))
+            self._conn.execute(
+                "DELETE FROM window_sessions WHERE COALESCE(ended_at, started_at) < ?",
+                (cutoff,))
             self._conn.commit()
             deleted = cur.rowcount
         if deleted:
             logger.info("🧹 [TIMELINE] Limpieza: %d registros con más de %.0fh borrados",
                         deleted, retention_hours)
         return deleted
+
+    def start_window_session(self, app_name: str, window_title: str,
+                             started_at: Optional[float] = None) -> int:
+        ts = float(started_at) if started_at is not None else time.time()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO window_sessions "
+                "(started_at, app_name, window_title) VALUES (?, ?, ?)",
+                (ts, app_name or "", window_title or ""))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def end_window_session(self, session_id: int,
+                           ended_at: Optional[float] = None) -> None:
+        ts = float(ended_at) if ended_at is not None else time.time()
+        with self._lock:
+            self._conn.execute("UPDATE window_sessions SET ended_at=? WHERE id=?",
+                               (ts, int(session_id)))
+            self._conn.commit()
+
+    def get_window_sessions(self, start_epoch: float, end_epoch: float,
+                            limit: int = 200) -> List[tuple]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, started_at, ended_at, app_name, window_title "
+                "FROM window_sessions "
+                "WHERE started_at <= ? AND COALESCE(ended_at, ?) >= ? "
+                "ORDER BY started_at ASC LIMIT ?",
+                (float(end_epoch), float(end_epoch), float(start_epoch), int(limit)))
+            return cur.fetchall()
 
     # -------------------------------------------------------------- consulta
 

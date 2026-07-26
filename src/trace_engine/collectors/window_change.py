@@ -71,6 +71,7 @@ class WindowChangeCollector:
         self._hook = None
         self._callback = None  # referencia viva: si el GC la recoge, el hook crashea
         self._last_event: Optional[tuple] = None  # (app_name, window_title)
+        self._session_id: Optional[int] = None
         self._user32 = ctypes.windll.user32
 
     # ------------------------------------------------------------ lifecycle
@@ -88,6 +89,9 @@ class WindowChangeCollector:
             self._user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
         if self._thread:
             self._thread.join(timeout=5)
+        if self._session_id is not None:
+            self.db.end_window_session(self._session_id)
+            self._session_id = None
         self._thread = None
         self._thread_id = None
 
@@ -144,6 +148,9 @@ class WindowChangeCollector:
             return
         if event_key == self._last_event:
             return  # el mismo foco repetido no aporta contexto
+        if self._session_id is not None:
+            self.db.end_window_session(self._session_id)
+        self._session_id = self.db.start_window_session(app_name, title)
         self._last_event = event_key
 
         if self.db.insert("app_change", app_name, title, title or app_name):

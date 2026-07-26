@@ -23,9 +23,11 @@ class TraceEngine:
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None,
-                 db: Optional[TimelineDB] = None):
+                 db: Optional[TimelineDB] = None, transcriber=None):
         self.config = dict(config or {})
         self.db = db or TimelineDB(self.config.get("db_path"))
+        if transcriber is not None:
+            self.config["whisper_transcriber"] = transcriber
         self.collector = None
         self._started = False
 
