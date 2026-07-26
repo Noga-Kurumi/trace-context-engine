@@ -40,6 +40,7 @@ dedicado (la captura nunca se bloquea por whisper).
 import logging
 import queue
 import threading
+import time
 from typing import List, Optional
 
 import numpy as np
@@ -59,6 +60,8 @@ SAMPLE_RATE = 16000          # whisper trabaja a 16kHz mono
 CHUNK_SECONDS = 0.5          # lectura por iteración por canal
 MIN_FLUSH_SECONDS = 2.0      # al cerrar la meeting, segmentos más cortos se descartan
 INT16_FULL_SCALE = 32768.0
+ACTIVE_CONFIRM_POLLS = 2
+INACTIVE_CONFIRM_POLLS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +114,7 @@ class MeetingAudioCollector:
         self.db = db
         self._external_transcriber = self.config.get("whisper_transcriber")
         self._transcription_service = self.config.get("transcription_service")
+        self._metadata_provider = self.config.get("meeting_metadata_provider")
         self.poll_seconds = float(self.config.get("meeting_poll_seconds", 5))
         self.segment_seconds = float(self.config.get("meeting_segment_seconds", 8))
         self.rms_threshold = float(self.config.get("meeting_rms_threshold", 0.01))
@@ -124,6 +128,12 @@ class MeetingAudioCollector:
         self._capture_paused = threading.Event()
 
         self._meeting_active = False
+        self._active_polls = 0
+        self._inactive_polls = 0
+        self._meeting_session_id = None
+        self._meeting_app = ""
+        self._meeting_channel = ""
+        self._meeting_participants = ""
         self._capture_disabled = False  # fallo de captura ya logueado esta sesión
 
         # Segmentos listos para transcribir: (source, audio_f32). Acotada: si
@@ -161,6 +171,7 @@ class MeetingAudioCollector:
         if self._transcribe_thread:
             self._transcribe_thread.join(timeout=5)
             self._transcribe_thread = None
+        self._close_meeting_session()
         logger.info("🛑 [MEETING] Recolector de reuniones detenido")
 
     def set_capture_paused(self, active: bool) -> None:
@@ -175,24 +186,48 @@ class MeetingAudioCollector:
     def _poll_loop(self) -> None:
         while not self._stop_event.wait(self.poll_seconds):
             try:
-                active = self._detect_meeting()
+                state = self._detect_state()
             except Exception as e:
                 logger.error("❌ [MEETING] Error en la detección: %s", e, exc_info=True)
                 continue
-            if active and not self._meeting_active:
+            active = state["active"]
+            if active:
+                self._active_polls += 1
+                self._inactive_polls = 0
+            else:
+                self._inactive_polls += 1
+                self._active_polls = 0
+            if active and not self._meeting_active and self._active_polls >= ACTIVE_CONFIRM_POLLS:
                 self._meeting_active = True
+                self._meeting_app = state["app_name"]
+                self._meeting_channel = state["channel_name"]
+                self._meeting_participants = state["participants"]
+                self._meeting_session_id = self.db.start_meeting_session(
+                    self._meeting_app, self._meeting_channel,
+                    self._meeting_participants)
                 logger.info("📞 [MEETING] Reunión detectada (canal de voz activo); "
                             "iniciando captura de audio")
                 self._start_capture()
-            elif not active and self._meeting_active:
+            elif (not active and self._meeting_active and
+                  self._inactive_polls >= INACTIVE_CONFIRM_POLLS):
                 self._meeting_active = False
                 logger.info("📴 [MEETING] Reunión finalizada; deteniendo captura")
                 self._stop_capture()
+                self._close_meeting_session()
 
     def _detect_meeting(self) -> bool:
         """True si alguna app de meeting tiene una sesión de audio ACTIVA.
 
         Ver docstring del módulo para la heurística y sus limitaciones.
+        """
+        return self._detect_state()["active"]
+
+    def _detect_state(self) -> dict:
+        """Obtiene estado y metadatos confirmables por Windows.
+
+        WASAPI/pycaw no exponen de forma fiable el canal ni los integrantes de
+        Discord; esos campos permanecen vacíos hasta integrar una fuente
+        explícita de Discord.
         """
         from pycaw.pycaw import AudioUtilities
 
@@ -201,9 +236,44 @@ class MeetingAudioCollector:
                 continue
             name = session.Process.name().lower()
             if any(name.startswith(app) for app in self.source_apps):
-                if getattr(session, "State", 0) == 1:  # AudioSessionState.Active
-                    return True
-        return False
+                if getattr(session, "State", 0) != 1:
+                    continue
+                muted = False
+                try:
+                    volume = session.SimpleAudioVolume
+                    muted = bool(volume.GetMute()) if volume is not None else False
+                except Exception:
+                    pass
+                if muted:
+                    return {"active": False, "app_name": name,
+                            "channel_name": "", "participants": "", "deafened": True}
+                metadata = self._meeting_metadata()
+                return {"active": True, "app_name": name,
+                        "channel_name": metadata["channel_name"],
+                        "participants": metadata["participants"],
+                        "deafened": False}
+        return {"active": False, "app_name": "", "channel_name": "",
+                "participants": "", "deafened": False}
+
+    def _meeting_metadata(self) -> dict:
+        """Obtiene metadatos opcionales sin acoplar TRACE a una app concreta."""
+        if not callable(self._metadata_provider):
+            return ""
+        try:
+            metadata = self._metadata_provider() or {}
+            participants = metadata.get("participants", "")
+            if isinstance(participants, (list, tuple, set)):
+                participants = ", ".join(str(item) for item in participants)
+            return {"channel_name": str(metadata.get("channel_name", "")),
+                    "participants": str(participants or "")}
+        except Exception as exc:
+            logger.debug("[MEETING] Proveedor de metadatos no disponible: %s", exc)
+        return {"channel_name": "", "participants": ""}
+
+    def _close_meeting_session(self) -> None:
+        if self._meeting_session_id is not None:
+            self.db.end_meeting_session(self._meeting_session_id)
+            self._meeting_session_id = None
 
     # --------------------------------------------------------------- captura
 

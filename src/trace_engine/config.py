@@ -25,6 +25,7 @@ class TraceConfig:
     meeting_source_apps: list[str] = field(default_factory=lambda: ["discord"])
     trace_excluded_apps: list[str] = field(default_factory=list)
     clipboard_max_chars: int = 10000
+    meeting_metadata_provider: Any = None
 
     @classmethod
     def from_mapping(cls, values: Optional[Dict[str, Any]] = None) -> "TraceConfig":

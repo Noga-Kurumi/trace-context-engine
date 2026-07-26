@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS window_sessions (
 CREATE INDEX IF NOT EXISTS idx_window_sessions_time
     ON window_sessions(started_at, ended_at);
 
+CREATE TABLE IF NOT EXISTS meeting_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    app_name TEXT NOT NULL,
+    channel_name TEXT,
+    participants TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_sessions_time
+    ON meeting_sessions(started_at, ended_at);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS timeline_fts USING fts5(
     content, app_name, window_title,
     content='timeline', content_rowid='id'
@@ -135,6 +146,9 @@ class TimelineDB:
             self._conn.execute(
                 "DELETE FROM window_sessions WHERE COALESCE(ended_at, started_at) < ?",
                 (cutoff,))
+            self._conn.execute(
+                "DELETE FROM meeting_sessions WHERE COALESCE(ended_at, started_at) < ?",
+                (cutoff,))
             self._conn.commit()
             deleted = cur.rowcount
         if deleted:
@@ -167,6 +181,37 @@ class TimelineDB:
             cur = self._conn.execute(
                 "SELECT id, started_at, ended_at, app_name, window_title "
                 "FROM window_sessions "
+                "WHERE started_at <= ? AND COALESCE(ended_at, ?) >= ? "
+                "ORDER BY started_at ASC LIMIT ?",
+                (float(end_epoch), float(end_epoch), float(start_epoch), int(limit)))
+            return cur.fetchall()
+
+    def start_meeting_session(self, app_name: str, channel_name: str = "",
+                              participants: str = "",
+                              started_at: Optional[float] = None) -> int:
+        ts = float(started_at) if started_at is not None else time.time()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO meeting_sessions "
+                "(started_at, app_name, channel_name, participants) VALUES (?, ?, ?, ?)",
+                (ts, app_name or "", channel_name or "", participants or ""))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def end_meeting_session(self, session_id: int,
+                            ended_at: Optional[float] = None) -> None:
+        ts = float(ended_at) if ended_at is not None else time.time()
+        with self._lock:
+            self._conn.execute("UPDATE meeting_sessions SET ended_at=? WHERE id=?",
+                               (ts, int(session_id)))
+            self._conn.commit()
+
+    def get_meeting_sessions(self, start_epoch: float, end_epoch: float,
+                             limit: int = 50) -> List[tuple]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, started_at, ended_at, app_name, channel_name, participants "
+                "FROM meeting_sessions "
                 "WHERE started_at <= ? AND COALESCE(ended_at, ?) >= ? "
                 "ORDER BY started_at ASC LIMIT ?",
                 (float(end_epoch), float(end_epoch), float(start_epoch), int(limit)))

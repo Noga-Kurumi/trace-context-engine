@@ -161,6 +161,32 @@ def get_window_sessions_by_time_range(start_time: str, end_time: str,
     return "\n".join(lines)
 
 
+@mcp_server.tool()
+def get_meeting_sessions_by_time_range(start_time: str, end_time: str,
+                                       limit: int = 20) -> str:
+    """Devuelve llamadas detectadas con horario, canal y participantes."""
+    try:
+        t0 = _parse_time(start_time)
+        t1 = _parse_time(end_time)
+    except ValueError as e:
+        return f"Error de parámetros: {e}"
+    if t1 < t0:
+        t0, t1 = t1, t0
+    rows = _get_db().get_meeting_sessions(t0, t1, limit=limit)
+    if not rows:
+        return "Sin reuniones registradas en esa franja horaria."
+    lines = []
+    for _id, started, ended, app, channel, participants in rows:
+        finish = ended if ended is not None else time.time()
+        start_label = datetime.fromtimestamp(started).strftime("%H:%M:%S")
+        end_label = datetime.fromtimestamp(finish).strftime("%H:%M:%S")
+        detail = channel or "canal no disponible"
+        if participants:
+            detail += f" | participantes: {participants}"
+        lines.append(f"[{start_label}-{end_label}] {app}: {detail}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------- ejecución en-proceso
 
 async def _call_tool_async(name: str, arguments: dict) -> str:
