@@ -41,11 +41,11 @@ class ContextCollector:
         from trace_engine.collectors.screen_ocr import ScreenOcrCollector
         from trace_engine.collectors.window_change import WindowChangeCollector
 
-        self._collectors = [
-            WindowChangeCollector(self.db),
-            ClipboardCollector(self.db),
-            ScreenOcrCollector(self.db, config=self.config),
-        ]
+        self._collectors = [WindowChangeCollector(self.db)]
+        if self.config.get("trace_clipboard_enabled", True):
+            self._collectors.append(ClipboardCollector(self.db))
+        if self.config.get("trace_screen_enabled", True):
+            self._collectors.append(ScreenOcrCollector(self.db, config=self.config))
 
         # Audio de reuniones (fase C): solo si la detección está habilitada.
         if self.config.get("meeting_detection_enabled", True):
