@@ -187,6 +187,76 @@ def get_meeting_sessions_by_time_range(start_time: str, end_time: str,
     return "\n".join(lines)
 
 
+@mcp_server.tool()
+def get_context(query: str = "", time_hint: str = "recent",
+                sources: Optional[list[str]] = None,
+                max_chars: int = 4000) -> str:
+    """Recupera contexto compuesto para preguntas ambiguas.
+
+    Usar esta tool cuando la consulta no indique claramente una fuente o una
+    franja horaria. Combina actividad reciente, ventanas, OCR, portapapeles y
+    reuniones. `time_hint` acepta recent, today, morning, afternoon, evening o
+    yesterday. Para una búsqueda concreta, `query` filtra además por palabras.
+    """
+    now = time.time()
+    hint = (time_hint or "recent").strip().lower()
+    if hint == "today":
+        start = datetime.now().replace(hour=0, minute=0, second=0,
+                                       microsecond=0).timestamp()
+    elif hint == "yesterday":
+        today = datetime.now().replace(hour=0, minute=0, second=0,
+                                       microsecond=0)
+        start = today.timestamp() - 86400
+        now = today.timestamp()
+    elif hint == "morning":
+        start = datetime.now().replace(hour=6, minute=0, second=0,
+                                       microsecond=0).timestamp()
+    elif hint == "afternoon":
+        start = datetime.now().replace(hour=12, minute=0, second=0,
+                                       microsecond=0).timestamp()
+    elif hint == "evening":
+        start = datetime.now().replace(hour=18, minute=0, second=0,
+                                       microsecond=0).timestamp()
+    else:
+        start = now - 2 * 3600
+
+    allowed = set(sources or [])
+    rows = (_get_db().search_by_keywords(query, limit=80) if query.strip()
+            else _get_db().get_by_time_range(start, now, limit=120))
+    rows = [row for row in rows
+            if start <= row[1] <= now and (not allowed or row[2] in allowed)]
+    activity = TimelineDB.format_results(rows, max_chars=240)
+
+    windows = _get_db().get_window_sessions(start, now, limit=30)
+    window_lines = []
+    for _id, began, ended, app, title in windows:
+        finish = ended if ended is not None else now
+        window_lines.append(
+            f"[{datetime.fromtimestamp(began).strftime('%H:%M')}-"
+            f"{datetime.fromtimestamp(finish).strftime('%H:%M')}] {app}: {title}")
+
+    meetings = _get_db().get_meeting_sessions(start, now, limit=20)
+    meeting_lines = []
+    for _id, began, ended, app, channel, participants in meetings:
+        finish = ended if ended is not None else now
+        detail = channel or "canal no disponible"
+        if participants:
+            detail += f"; participantes: {participants}"
+        meeting_lines.append(
+            f"[{datetime.fromtimestamp(began).strftime('%H:%M')}-"
+            f"{datetime.fromtimestamp(finish).strftime('%H:%M')}] {app}: {detail}")
+
+    sections = []
+    if window_lines:
+        sections.append("ACTIVIDAD DE VENTANAS:\n" + "\n".join(window_lines))
+    if meeting_lines:
+        sections.append("REUNIONES:\n" + "\n".join(meeting_lines))
+    if activity:
+        sections.append("EVENTOS:\n" + activity)
+    result = "\n\n".join(sections) or "No hay contexto registrado para ese período."
+    return result[:max(500, int(max_chars))]
+
+
 # ---------------------------------------------------- ejecución en-proceso
 
 async def _call_tool_async(name: str, arguments: dict) -> str:
