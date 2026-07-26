@@ -110,6 +110,7 @@ class MeetingAudioCollector:
         self.config = config or {}
         self.db = db
         self._external_transcriber = self.config.get("whisper_transcriber")
+        self._transcription_service = self.config.get("transcription_service")
         self.poll_seconds = float(self.config.get("meeting_poll_seconds", 5))
         self.segment_seconds = float(self.config.get("meeting_segment_seconds", 8))
         self.rms_threshold = float(self.config.get("meeting_rms_threshold", 0.01))
@@ -371,19 +372,32 @@ class MeetingAudioCollector:
                 continue
             try:
                 audio = np.ascontiguousarray(audio, dtype=np.float32)
-                if self._external_transcriber is not None:
+                if self._transcription_service is not None:
+                    from trace_engine.transcription import TranscriptionPriority
+                    result_queue = self._transcription_service.submit(
+                        audio, source="meeting",
+                        priority=TranscriptionPriority.MEETING)
+                    result = result_queue.get()
+                    text = getattr(result, "text", "")
+                elif self._external_transcriber is not None:
                     result = self._external_transcriber.transcribe(audio)
+                    text = " ".join(
+                        seg.text if hasattr(seg, "text") else str(seg)
+                        for seg in result
+                        if (seg.text if hasattr(seg, "text") else str(seg)).strip().upper()
+                        not in _FILTERED_UPPER
+                    ).strip()
                 else:
                     model = self._get_model()
                     if model is None:
                         continue
                     result = model.transcribe(audio)
-                text = " ".join(
-                    seg.text if hasattr(seg, "text") else str(seg)
-                    for seg in result
-                    if (seg.text if hasattr(seg, "text") else str(seg)).strip().upper()
-                    not in _FILTERED_UPPER
-                ).strip()
+                    text = " ".join(
+                        seg.text if hasattr(seg, "text") else str(seg)
+                        for seg in result
+                        if (seg.text if hasattr(seg, "text") else str(seg)).strip().upper()
+                        not in _FILTERED_UPPER
+                    ).strip()
                 # El buffer se descarta acá: solo el texto sigue adelante.
                 audio = None
                 if not text or text.upper() in _FILTERED_UPPER:

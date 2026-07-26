@@ -26,6 +26,15 @@ class TraceEngine:
                  db: Optional[TimelineDB] = None, transcriber=None):
         self.config = dict(config or {})
         self.db = db or TimelineDB(self.config.get("db_path"))
+        self.transcription_service = self.config.get("transcription_service")
+        if self.transcription_service is None and self.config.get("whisper_model_path"):
+            from trace_engine.transcription import TranscriptionService
+            self.transcription_service = TranscriptionService(
+                self.config["whisper_model_path"],
+                n_threads=int(self.config.get("whisper_threads", 4) or 4),
+                language=self.config.get("whisper_language", "es"),
+            )
+            self.config["transcription_service"] = self.transcription_service
         if transcriber is not None:
             self.config["whisper_transcriber"] = transcriber
         self.collector = None
@@ -63,6 +72,9 @@ class TraceEngine:
         if self.collector is not None:
             self.collector.stop()
             self.collector = None
+        if self.transcription_service is not None:
+            self.transcription_service.close()
+            self.transcription_service = None
         self.db.close()
         self._started = False
 
