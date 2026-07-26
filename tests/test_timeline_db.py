@@ -9,7 +9,7 @@ import os
 import sys
 
 # tests/ esta un nivel debajo de la raiz: que los imports del proyecto resuelvan.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import os
 import tempfile

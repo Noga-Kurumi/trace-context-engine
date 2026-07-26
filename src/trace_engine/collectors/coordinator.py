@@ -41,9 +41,9 @@ class ContextCollector:
         from trace_engine.collectors.screen_ocr import ScreenOcrCollector
         from trace_engine.collectors.window_change import WindowChangeCollector
 
-        self._collectors = [WindowChangeCollector(self.db)]
+        self._collectors = [WindowChangeCollector(self.db, config=self.config)]
         if self.config.get("trace_clipboard_enabled", True):
-            self._collectors.append(ClipboardCollector(self.db))
+            self._collectors.append(ClipboardCollector(self.db, config=self.config))
         if self.config.get("trace_screen_enabled", True):
             self._collectors.append(ScreenOcrCollector(self.db, config=self.config))
 

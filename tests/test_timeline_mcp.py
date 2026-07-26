@@ -4,7 +4,7 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import trace_engine.mcp.timeline_mcp_server as mcp_srv
 from trace_engine.storage.timeline_db import TimelineDB
@@ -28,6 +28,8 @@ async def list_tools():
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "trace_engine.mcp.timeline_mcp_server"],
+        env={**os.environ, "PYTHONPATH": os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")},
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

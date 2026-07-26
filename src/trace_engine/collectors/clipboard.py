@@ -11,6 +11,7 @@ import ctypes
 import hashlib
 import logging
 import threading
+import re
 from typing import Optional
 
 from trace_engine.storage.timeline_db import TimelineDB
@@ -27,8 +28,12 @@ _CLASS_NAME = "TimelineClipboardListener"
 class ClipboardCollector:
     """Inserta en el timeline cada texto que cae al portapapeles."""
 
-    def __init__(self, db: TimelineDB):
+    def __init__(self, db: TimelineDB, config=None):
         self.db = db
+        self.config = config or {}
+        self.max_chars = int(self.config.get("clipboard_max_chars", 10000))
+        self.excluded_apps = {str(x).lower() for x in self.config.get("trace_excluded_apps", [])}
+        self.redact_sensitive = bool(self.config.get("clipboard_redact_sensitive", True))
         self._thread: Optional[threading.Thread] = None
         self._hwnd = None
         self._last_hash: Optional[bytes] = None
@@ -125,10 +130,24 @@ class ClipboardCollector:
 
         if not text:
             return
+        if len(text) > self.max_chars:
+            text = text[:self.max_chars]
+        try:
+            from trace_engine.collectors.window_change import get_foreground_window_info
+            app_name, title = get_foreground_window_info()
+        except Exception:
+            app_name, title = "", ""
+        if app_name.lower() in self.excluded_apps:
+            return
+        if self.redact_sensitive and re.search(
+                r"(?i)(api[_-]?key|secret|password|token|authorization)\s*[:=]",
+                text):
+            logger.info("[CLIPBOARD] Contenido sensible omitido")
+            return
         digest = hashlib.blake2b(text.encode("utf-8", "ignore"), digest_size=16).digest()
         if digest == self._last_hash:
             return  # mismo contenido copiado dos veces seguidas
         self._last_hash = digest
 
-        if self.db.insert("clipboard", "", "", text):
+        if self.db.insert("clipboard", app_name, title, text):
             logger.debug("[CLIPBOARD] Copiado: %d chars", len(text))

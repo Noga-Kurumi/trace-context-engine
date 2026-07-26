@@ -121,6 +121,9 @@ class ScreenOcrCollector:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._last_hash: Optional[bytes] = None
+        self._last_text = ""
+        self.excluded_apps = {str(x).lower() for x in self.config.get("trace_excluded_apps", [])}
+        self._sct = None
         self._engine = None       # OcrEngine compartido (get_ocr_engine)
 
     # ------------------------------------------------------------ lifecycle
@@ -147,6 +150,8 @@ class ScreenOcrCollector:
             return  # log ya emitido; el recolector queda inactivo
         logger.info("✅ [OCR] Recolector de pantalla activo (cada %.0fs)", self.interval)
         loop = asyncio.new_event_loop()
+        import mss
+        self._sct = mss.mss()
         try:
             while not self._stop_event.wait(self.interval):
                 try:
@@ -155,6 +160,9 @@ class ScreenOcrCollector:
                     logger.error("❌ [OCR] Error en el ciclo OCR: %s", e, exc_info=True)
         finally:
             loop.close()
+            if self._sct is not None:
+                self._sct.close()
+                self._sct = None
             logger.info("🛑 [OCR] Recolector de pantalla detenido")
 
     # -------------------------------------------------------------- un tick
@@ -174,6 +182,13 @@ class ScreenOcrCollector:
         except Exception as e:
             logger.warning("⚠️ [OCR] Sin ventana activa para etiquetar: %s", e)
             app_name, title = "", ""
+        if app_name.lower() in self.excluded_apps:
+            return
+        # Cambios visuales menores pueden producir el mismo texto. No lo
+        # vuelvas a almacenar si el OCR no aporta contexto nuevo.
+        if text == self._last_text:
+            return
+        self._last_text = text
         if self.db.insert("ocr", app_name, title, text):
             logger.debug("[OCR] Pantalla: %d chars (%s - %s)", len(text), app_name, title[:40])
 
@@ -183,12 +198,13 @@ class ScreenOcrCollector:
         El hash corre sobre la imagen reescalada a _HASH_WIDTH px en escala de
         grises: barato y suficiente para detectar cambios de contenido.
         """
-        import mss
         from PIL import Image
 
-        with mss.mss() as sct:
-            monitor = sct.monitors[1]  # monitor principal
-            shot = sct.grab(monitor)
+        if self._sct is None:
+            import mss
+            self._sct = mss.mss()
+        monitor = self._sct.monitors[1]  # monitor principal
+        shot = self._sct.grab(monitor)
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
 
         thumb = img.convert("L")

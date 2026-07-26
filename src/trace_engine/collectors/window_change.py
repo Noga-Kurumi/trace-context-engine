@@ -62,8 +62,10 @@ def get_foreground_window_info() -> tuple:
 class WindowChangeCollector:
     """Inserta en el timeline cada cambio de ventana en primer plano."""
 
-    def __init__(self, db: TimelineDB):
+    def __init__(self, db: TimelineDB, config=None):
         self.db = db
+        self.config = config or {}
+        self.excluded_apps = {str(x).lower() for x in self.config.get("trace_excluded_apps", [])}
         self._thread: Optional[threading.Thread] = None
         self._thread_id: Optional[int] = None
         self._hook = None
@@ -138,6 +140,8 @@ class WindowChangeCollector:
             logger.warning("⚠️ [WINDOWS] Sin nombre de proceso para hwnd %s: %s", hwnd, e)
 
         event_key = (app_name, title)
+        if app_name.lower() in self.excluded_apps:
+            return
         if event_key == self._last_event:
             return  # el mismo foco repetido no aporta contexto
         self._last_event = event_key
