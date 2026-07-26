@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trace-context-engine"
+version = "0.1.0.dev0"
+description = "Temporal Retrieval & Activity Context Engine"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.5.1",
+    "mss>=10.2.0",
+    "Pillow>=12.3.0",
+    "pywin32>=307",
+    "psutil>=5.9",
+    "winsdk>=1.0.0b10",
+    "PyAudioWPatch>=0.2.12",
+    "pycaw>=20251023",
+    "mcp>=1.28",
+    "pywhispercpp>=1.5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+trace = ["py.typed"]
