@@ -52,6 +52,14 @@ rows = db.get_by_time_range(now - 100, now - 10)
 assert rows == []
 print("get_by_time_range OK (rango, orden ASC)")
 
+# ---- sesiones de ventana con duración ----
+session_id = db.start_window_session("Code.exe", "archivo.py", now - 20)
+db.end_window_session(session_id, now - 5)
+sessions = db.get_window_sessions(now - 30, now)
+assert len(sessions) == 1 and sessions[0][0] == session_id, sessions
+assert sessions[0][2] == now - 5, sessions
+print("window_sessions OK (inicio, fin y rango temporal)")
+
 # ---- format compacto ----
 rows = db.search_by_keywords("clipboard")
 texto = TimelineDB.format_results(rows, max_chars=20)

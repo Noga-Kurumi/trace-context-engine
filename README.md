@@ -35,3 +35,13 @@ with TraceEngine() as trace:
 En Linux y macOS TRACE funciona como motor de persistencia y recuperaciÃ³n.
 Los recolectores especÃ­ficos de cada plataforma pueden ser aportados por la
 aplicaciÃ³n o mediante futuros plugins.
+
+Para evitar duplicar modelos de transcripciÃ³n, una aplicaciÃ³n que ya disponga
+de un transcriptor puede inyectarlo:
+
+```python
+trace = TraceEngine(transcriber=transcriptor_existente)
+```
+
+El objeto debe exponer `transcribe(audio)`. El recolector de reuniones usarÃ¡
+esa instancia y no cargarÃ¡ otro modelo Whisper.
