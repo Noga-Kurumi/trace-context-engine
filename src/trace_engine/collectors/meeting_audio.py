@@ -119,7 +119,7 @@ class MeetingAudioCollector:
         self._poll_thread: Optional[threading.Thread] = None
         self._capture_thread: Optional[threading.Thread] = None
         self._capture_stop = threading.Event()
-        self._ptt_active = threading.Event()  # push-to-talk tiene prioridad (mic)
+        self._capture_paused = threading.Event()
 
         self._meeting_active = False
         self._capture_disabled = False  # fallo de captura ya logueado esta sesión
@@ -161,12 +161,12 @@ class MeetingAudioCollector:
             self._transcribe_thread = None
         logger.info("🛑 [MEETING] Recolector de reuniones detenido")
 
-    def set_ptt_active(self, active: bool) -> None:
+    def set_capture_paused(self, active: bool) -> None:
         """Pausa/reanuda la captura de mic mientras dura el push-to-talk."""
         if active:
-            self._ptt_active.set()
+            self._capture_paused.set()
         else:
-            self._ptt_active.clear()
+            self._capture_paused.clear()
 
     # ------------------------------------------------------------- detección
 
@@ -269,7 +269,7 @@ class MeetingAudioCollector:
             while not self._capture_stop.is_set():
                 if mic_stream is not None:
                     pcm = mic_stream.read(mic_frames, exception_on_overflow=False)
-                    if self._ptt_active.is_set():
+                    if self._capture_paused.is_set():
                         # PTT tiene prioridad: el mic es del asistente ahora.
                         buffers["audio_in"] = []
                     else:

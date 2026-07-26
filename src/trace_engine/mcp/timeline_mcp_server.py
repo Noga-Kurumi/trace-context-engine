@@ -17,7 +17,7 @@ DOS MODOS DE USO (mismo servidor, mismo protocolo MCP):
    (mcp.shared.memory.create_connected_server_and_client_session). Es MCP
    real — mismo código de protocolo, sin subproceso ni latencia extra — y
    corre en el hilo worker del brain (nunca en la UI).
-2. Standalone por stdio (`python -m modules.timeline_mcp_server`): para
+2. Standalone por stdio (`python -m trace_engine.mcp.timeline_mcp_server`): para
    cualquier cliente MCP externo a futuro.
 
 La DB se abre lazy en data/timeline.db con su propia conexión: WAL +
@@ -36,7 +36,7 @@ from trace_engine.storage.timeline_db import TimelineDB
 
 logger = logging.getLogger(__name__)
 
-mcp_server = FastMCP("asistente-timeline")
+mcp_server = FastMCP("trace-context")
 
 # Conexión lazy del servidor (ver docstring del módulo).
 _db: Optional[TimelineDB] = None

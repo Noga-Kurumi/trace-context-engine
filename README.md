@@ -11,4 +11,5 @@ Durante el desarrollo se instala como dependencia editable:
 pip install -e .
 ```
 
-El proyecto `asistente-desktop` consumirá TRACE como una librería externa.
+TRACE puede ser consumido por cualquier aplicación local que necesite contexto
+de actividad del equipo, incluyendo asistentes de IA.

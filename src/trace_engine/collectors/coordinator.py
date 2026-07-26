@@ -119,11 +119,11 @@ class ContextCollector:
 
     # ------------------------------------------------------------------- PTT
 
-    def set_ptt_active(self, active: bool) -> None:
+    def set_capture_paused(self, active: bool) -> None:
         """Propaga el estado del push-to-talk a los recolectores que lo usan
         (MeetingAudioCollector pausa el mic mientras el asistente graba)."""
         for collector in self._collectors:
-            setter = getattr(collector, "set_ptt_active", None)
+            setter = getattr(collector, "set_capture_paused", None)
             if setter is not None:
                 try:
                     setter(active)
