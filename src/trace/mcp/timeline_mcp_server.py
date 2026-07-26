@@ -32,7 +32,7 @@ from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from modules.timeline_db import TimelineDB
+from trace.storage.timeline_db import TimelineDB
 
 logger = logging.getLogger(__name__)
 

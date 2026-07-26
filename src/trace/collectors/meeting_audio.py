@@ -44,8 +44,12 @@ from typing import List, Optional
 
 import numpy as np
 
-from modules.timeline_db import TimelineDB
-from modules.whisper_wrapper import FILTERED_MARKERS
+from trace.storage.timeline_db import TimelineDB
+
+FILTERED_MARKERS = frozenset({
+    "[MÚSICA]", "[MUSIC]", "[BLANK_AUDIO]", "[SILENCIO]", "[SILENCE]",
+    "[APPLAUSE]", "[APLAUSOS]", "[RISAS]", "[LAUGHTER]",
+})
 
 _FILTERED_UPPER = {m.upper() for m in FILTERED_MARKERS}
 
@@ -103,9 +107,7 @@ class MeetingAudioCollector:
     """Captura y transcribe audio de meetings solo mientras hay una activa."""
 
     def __init__(self, db: TimelineDB, config=None):
-        from modules.config_manager import get_config
-
-        self.config = config or get_config()
+        self.config = config or {}
         self.db = db
         self.poll_seconds = float(self.config.get("meeting_poll_seconds", 5))
         self.segment_seconds = float(self.config.get("meeting_segment_seconds", 8))
@@ -339,10 +341,11 @@ class MeetingAudioCollector:
             if self._model is not None or self._model_load_failed:
                 return self._model
             try:
-                from modules.audio_core import whisper_model_path
                 from pywhispercpp.model import Model
 
-                model_path = whisper_model_path(self.config)
+                model_path = self.config.get("whisper_model_path")
+                if not model_path:
+                    raise ValueError("TRACE necesita config['whisper_model_path'] para reuniones")
                 n_threads = int(self.config.get("whisper_threads", 4) or 4)
                 self._model = Model(
                     model_path,

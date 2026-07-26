@@ -22,8 +22,8 @@ import logging
 import threading
 from typing import Optional
 
-from modules.collectors.window_change import get_foreground_window_info
-from modules.timeline_db import TimelineDB
+from trace.collectors.window_change import get_foreground_window_info
+from trace.storage.timeline_db import TimelineDB
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +114,7 @@ class ScreenOcrCollector:
     """Inserta en el timeline el texto visible en pantalla cuando cambia."""
 
     def __init__(self, db: TimelineDB, config=None):
-        from modules.config_manager import get_config
-
-        self.config = config or get_config()
+        self.config = config or {}
         self.db = db
         self.interval = float(self.config.get("ocr_interval_seconds", 12))
         self.max_chars = int(self.config.get("ocr_max_chars", 4000))

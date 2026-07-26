@@ -163,7 +163,7 @@ def _ocr_screen_text(max_chars: int = 2000) -> str:
     from mss import mss
     from PIL import Image
 
-    from modules.collectors.screen_ocr import ocr_image
+    from trace.collectors.screen_ocr import ocr_image
 
     with mss() as sct:
         real = sct.monitors[1:]

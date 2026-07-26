@@ -14,8 +14,7 @@ import logging
 import threading
 from typing import Optional
 
-from modules.config_manager import get_config
-from modules.timeline_db import TimelineDB
+from trace.storage.timeline_db import TimelineDB
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ class ContextCollector:
     """Arranca/para los recolectores pasivos y la limpieza periódica."""
 
     def __init__(self, config=None, db: Optional[TimelineDB] = None):
-        self.config = config or get_config()
+        self.config = config or {}
         self.db = db or TimelineDB()
         self.retention_hours = float(self.config.get("timeline_retention_hours", 72))
         self._collectors = []
@@ -38,9 +37,9 @@ class ContextCollector:
 
     def _build_collectors(self) -> None:
         """Instancia los recolectores; el OCR y el meeting reciben la config."""
-        from modules.collectors.clipboard import ClipboardCollector
-        from modules.collectors.screen_ocr import ScreenOcrCollector
-        from modules.collectors.window_change import WindowChangeCollector
+        from trace.collectors.clipboard import ClipboardCollector
+        from trace.collectors.screen_ocr import ScreenOcrCollector
+        from trace.collectors.window_change import WindowChangeCollector
 
         self._collectors = [
             WindowChangeCollector(self.db),
@@ -50,7 +49,7 @@ class ContextCollector:
 
         # Audio de reuniones (fase C): solo si la detección está habilitada.
         if self.config.get("meeting_detection_enabled", True):
-            from modules.collectors.meeting_audio import MeetingAudioCollector
+            from trace.collectors.meeting_audio import MeetingAudioCollector
 
             self._collectors.append(MeetingAudioCollector(self.db, config=self.config))
 
