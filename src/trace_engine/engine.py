@@ -27,6 +27,14 @@ class TraceEngine:
         self.config = dict(config or {})
         self.db = db or TimelineDB(self.config.get("db_path"))
         self.transcription_service = self.config.get("transcription_service")
+        self.streaming_transcriber = self.config.get("streaming_transcriber")
+        if self.streaming_transcriber is None and self.config.get("whisper_stream_exe"):
+            from trace_engine.transcription import StreamingTranscriber
+            self.streaming_transcriber = StreamingTranscriber(
+                self.config["whisper_stream_exe"],
+                self.config["whisper_model_path"],
+                language=self.config.get("whisper_language", "es"),
+                n_threads=int(self.config.get("whisper_threads", 4) or 4))
         if self.transcription_service is None and self.config.get("whisper_model_path"):
             from trace_engine.transcription import TranscriptionService
             self.transcription_service = TranscriptionService(
@@ -75,6 +83,8 @@ class TraceEngine:
         if self.transcription_service is not None:
             self.transcription_service.close()
             self.transcription_service = None
+        if self.streaming_transcriber is not None:
+            self.streaming_transcriber.stop()
         self.db.close()
         self._started = False
 
@@ -86,6 +96,14 @@ class TraceEngine:
     def search(self, query: str, limit: int = 20):
         """Busca eventos recientes por palabras clave."""
         return self.db.search_by_keywords(query, limit)
+
+    def transcribe(self, audio, *, source: str = "interactive"):
+        """Transcribe audio con prioridad interactiva por defecto."""
+        if self.transcription_service is None:
+            raise RuntimeError("TRACE no tiene un servicio Whisper configurado")
+        from trace_engine.transcription import TranscriptionPriority
+        return self.transcription_service.transcribe(
+            audio, source=source, priority=TranscriptionPriority.INTERACTIVE)
 
     def close(self) -> None:
         """Alias de stop() para facilitar integración con context managers."""

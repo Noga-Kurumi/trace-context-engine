@@ -1,0 +1,101 @@
+"""Control del streaming Whisper para transcripción parcial."""
+
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import threading
+from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
+
+
+class StreamingTranscriber:
+    """Dueño del proceso whisper-stream-pcm.exe y su ciclo de vida."""
+
+    def __init__(self, executable: str, model_path: str, *, language: str = "es",
+                 n_threads: int = 4):
+        self.executable = executable
+        self.model_path = model_path
+        self.language = language
+        self.n_threads = int(n_threads or 4)
+        self._process: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
+        self._reader: Optional[threading.Thread] = None
+
+    @property
+    def running(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    def start(self, callback: Callable[[str], None]) -> bool:
+        with self._lock:
+            if self.running:
+                return False
+            if not os.path.exists(self.executable) or not os.path.exists(self.model_path):
+                logger.error("[TRACE-ASR] Streaming sin binario o modelo")
+                return False
+            cmd = [self.executable, "-m", self.model_path, "-l", self.language,
+                   "-t", str(self.n_threads), "-i", "-", "--format", "f32",
+                   "--sample-rate", "16000", "--vad", "--step", "200",
+                   "--length", "2000"]
+            try:
+                self._process = subprocess.Popen(
+                    cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE)
+                self._reader = threading.Thread(
+                    target=self._read_output, args=(self._process, callback),
+                    daemon=True, name="trace-whisper-stream")
+                self._reader.start()
+                threading.Thread(target=self._drain_stderr,
+                                 args=(self._process,), daemon=True,
+                                 name="trace-whisper-stderr").start()
+                return True
+            except Exception as exc:
+                logger.error("[TRACE-ASR] No se pudo iniciar streaming: %s", exc,
+                             exc_info=True)
+                self._process = None
+                return False
+
+    def send(self, audio) -> None:
+        with self._lock:
+            if not self.running or self._process.stdin is None:
+                return
+            try:
+                import numpy as np
+                data = np.ascontiguousarray(audio, dtype=np.float32)
+                self._process.stdin.write(data.tobytes())
+                self._process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                logger.warning("[TRACE-ASR] Streaming perdió el proceso Whisper")
+
+    def stop(self) -> None:
+        with self._lock:
+            process, self._process = self._process, None
+            if process is None:
+                return
+            try:
+                if process.stdin:
+                    process.stdin.close()
+                process.terminate()
+                process.wait(timeout=3)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _read_output(process, callback) -> None:
+        if process.stdout is None:
+            return
+        for raw in iter(process.stdout.readline, b""):
+            text = raw.decode("utf-8", errors="ignore").strip()
+            if text and not text.startswith("["):
+                callback(text)
+
+    @staticmethod
+    def _drain_stderr(process) -> None:
+        if process.stderr is not None:
+            for _ in iter(process.stderr.readline, b""):
+                pass

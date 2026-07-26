@@ -5,5 +5,7 @@ from trace_engine.transcription.service import (
     TranscriptionResult,
     TranscriptionService,
 )
+from trace_engine.transcription.streaming import StreamingTranscriber
 
-__all__ = ["TranscriptionPriority", "TranscriptionResult", "TranscriptionService"]
+__all__ = ["TranscriptionPriority", "TranscriptionResult", "TranscriptionService",
+           "StreamingTranscriber"]
