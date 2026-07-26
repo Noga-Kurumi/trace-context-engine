@@ -10,6 +10,7 @@ import platform
 from typing import Any, Dict, Optional
 
 from trace_engine.storage.timeline_db import TimelineDB
+from trace_engine.config import TraceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -22,29 +23,29 @@ class TraceEngine:
     y permite que el consumidor inyecte eventos desde sus propios recolectores.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None,
+    def __init__(self, config: Optional[Dict[str, Any] | TraceConfig] = None,
                  db: Optional[TimelineDB] = None, transcriber=None):
-        self.config = dict(config or {})
-        self.db = db or TimelineDB(self.config.get("db_path"))
-        self.transcription_service = self.config.get("transcription_service")
-        self.streaming_transcriber = self.config.get("streaming_transcriber")
-        if self.streaming_transcriber is None and self.config.get("whisper_stream_exe"):
+        self.config = (config if isinstance(config, TraceConfig)
+                       else TraceConfig.from_mapping(config))
+        values = self.config.as_dict()
+        self.db = db or TimelineDB(self.config.db_path)
+        self.transcription_service = None
+        self.streaming_transcriber = None
+        if self.config.whisper_stream_exe and self.config.whisper_model_path:
             from trace_engine.transcription import StreamingTranscriber
             self.streaming_transcriber = StreamingTranscriber(
-                self.config["whisper_stream_exe"],
-                self.config["whisper_model_path"],
-                language=self.config.get("whisper_language", "es"),
-                n_threads=int(self.config.get("whisper_threads", 4) or 4))
-        if self.transcription_service is None and self.config.get("whisper_model_path"):
+                self.config.whisper_stream_exe, self.config.whisper_model_path,
+                language=self.config.whisper_language,
+                n_threads=int(self.config.whisper_threads or 4))
+        if self.config.whisper_model_path:
             from trace_engine.transcription import TranscriptionService
             self.transcription_service = TranscriptionService(
-                self.config["whisper_model_path"],
-                n_threads=int(self.config.get("whisper_threads", 4) or 4),
-                language=self.config.get("whisper_language", "es"),
+                self.config.whisper_model_path,
+                n_threads=int(self.config.whisper_threads or 4),
+                language=self.config.whisper_language,
             )
-            self.config["transcription_service"] = self.transcription_service
         if transcriber is not None:
-            self.config["whisper_transcriber"] = transcriber
+            self.transcription_service = transcriber
         self.collector = None
         self._started = False
 
@@ -67,7 +68,9 @@ class TraceEngine:
             return
         try:
             from trace_engine.collectors.coordinator import ContextCollector
-            self.collector = ContextCollector(config=self.config, db=self.db)
+            collector_config = self.config.as_dict()
+            collector_config["transcription_service"] = self.transcription_service
+            self.collector = ContextCollector(config=collector_config, db=self.db)
             self.collector.start()
         except Exception as exc:
             logger.warning("No se pudieron activar los recolectores nativos: %s",
