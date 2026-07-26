@@ -16,7 +16,7 @@ import threading
 from ctypes import wintypes
 from typing import Optional
 
-from trace.storage.timeline_db import TimelineDB
+from trace_engine.storage.timeline_db import TimelineDB
 
 logger = logging.getLogger(__name__)
 

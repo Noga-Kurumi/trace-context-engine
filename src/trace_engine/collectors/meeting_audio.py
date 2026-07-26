@@ -44,7 +44,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from trace.storage.timeline_db import TimelineDB
+from trace_engine.storage.timeline_db import TimelineDB
 
 FILTERED_MARKERS = frozenset({
     "[MÚSICA]", "[MUSIC]", "[BLANK_AUDIO]", "[SILENCIO]", "[SILENCE]",

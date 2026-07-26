@@ -22,8 +22,8 @@ import logging
 import threading
 from typing import Optional
 
-from trace.collectors.window_change import get_foreground_window_info
-from trace.storage.timeline_db import TimelineDB
+from trace_engine.collectors.window_change import get_foreground_window_info
+from trace_engine.storage.timeline_db import TimelineDB
 
 logger = logging.getLogger(__name__)
 

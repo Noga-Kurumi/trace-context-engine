@@ -14,7 +14,7 @@ import logging
 import threading
 from typing import Optional
 
-from trace.storage.timeline_db import TimelineDB
+from trace_engine.storage.timeline_db import TimelineDB
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ class ContextCollector:
 
     def _build_collectors(self) -> None:
         """Instancia los recolectores; el OCR y el meeting reciben la config."""
-        from trace.collectors.clipboard import ClipboardCollector
-        from trace.collectors.screen_ocr import ScreenOcrCollector
-        from trace.collectors.window_change import WindowChangeCollector
+        from trace_engine.collectors.clipboard import ClipboardCollector
+        from trace_engine.collectors.screen_ocr import ScreenOcrCollector
+        from trace_engine.collectors.window_change import WindowChangeCollector
 
         self._collectors = [
             WindowChangeCollector(self.db),
@@ -49,7 +49,7 @@ class ContextCollector:
 
         # Audio de reuniones (fase C): solo si la detección está habilitada.
         if self.config.get("meeting_detection_enabled", True):
-            from trace.collectors.meeting_audio import MeetingAudioCollector
+            from trace_engine.collectors.meeting_audio import MeetingAudioCollector
 
             self._collectors.append(MeetingAudioCollector(self.db, config=self.config))
 
