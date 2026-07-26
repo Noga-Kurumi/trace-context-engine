@@ -8,6 +8,11 @@ version = "0.1.0.dev0"
 description = "Temporal Retrieval & Activity Context Engine"
 requires-python = ">=3.13"
 dependencies = [
+    "platformdirs>=4.3",
+]
+
+[project.optional-dependencies]
+windows = [
     "numpy>=2.5.1",
     "mss>=10.2.0",
     "Pillow>=12.3.0",
@@ -16,12 +21,17 @@ dependencies = [
     "winsdk>=1.0.0b10",
     "PyAudioWPatch>=0.2.12",
     "pycaw>=20251023",
-    "mcp>=1.28",
     "pywhispercpp>=1.5.0",
+]
+audio = [
+    "pywhispercpp>=1.5.0",
+]
+mcp = [
+    "mcp>=1.28",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-trace = ["py.typed"]
+trace_engine = ["py.typed"]

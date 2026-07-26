@@ -32,10 +32,12 @@ import time
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from platformdirs import user_data_dir
+
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_DB_PATH = os.path.join(BASE_DIR, "data", "timeline.db")
+APP_DATA_DIR = user_data_dir("TRACE", "TRACE")
+DEFAULT_DB_PATH = os.path.join(APP_DATA_DIR, "timeline.db")
 
 SOURCES = ("app_change", "ocr", "audio_in", "audio_out", "clipboard")
 

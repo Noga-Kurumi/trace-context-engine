@@ -13,3 +13,25 @@ pip install -e .
 
 TRACE puede ser consumido por cualquier aplicación local que necesite contexto
 de actividad del equipo, incluyendo asistentes de IA.
+
+El nÃºcleo de TRACE es multiplataforma: SQLite, el timeline y la bÃºsqueda no
+requieren APIs especÃ­ficas del sistema operativo. Los recolectores nativos de
+Windows son opcionales:
+
+```powershell
+pip install -e ".[windows]"
+```
+
+Uso bÃ¡sico:
+
+```python
+from trace_engine import TraceEngine
+
+with TraceEngine() as trace:
+    trace.insert("clipboard", "texto copiado")
+    resultados = trace.search("texto")
+```
+
+En Linux y macOS TRACE funciona como motor de persistencia y recuperaciÃ³n.
+Los recolectores especÃ­ficos de cada plataforma pueden ser aportados por la
+aplicaciÃ³n o mediante futuros plugins.
