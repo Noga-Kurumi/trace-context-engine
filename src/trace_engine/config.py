@@ -13,6 +13,7 @@ class TraceConfig:
     db_path: Optional[str] = None
     whisper_model_path: Optional[str] = None
     whisper_stream_exe: Optional[str] = None
+    whisper_cli_exe: Optional[str] = None
     whisper_threads: int = 4
     whisper_language: str = "es"
     timeline_enabled: bool = True

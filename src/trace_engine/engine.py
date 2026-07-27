@@ -39,10 +39,14 @@ class TraceEngine:
                 n_threads=int(self.config.whisper_threads or 4))
         if self.config.whisper_model_path:
             from trace_engine.transcription import TranscriptionService
+            # Preferir whisper_cli_exe (whisper-cli.exe, Vulkan batch).
+            # Fallback a whisper_stream_exe por compatibilidad con configs antiguas.
+            cli_exe = self.config.whisper_cli_exe or self.config.whisper_stream_exe or None
             self.transcription_service = TranscriptionService(
                 self.config.whisper_model_path,
                 n_threads=int(self.config.whisper_threads or 4),
                 language=self.config.whisper_language,
+                whisper_cli_exe=cli_exe,
             )
         if transcriber is not None:
             self.transcription_service = transcriber

@@ -2,6 +2,10 @@
 
 TRACE es dueño del modelo y de su ciclo de vida. Los consumidores solo
 encolan audio; nunca crean instancias Whisper por su cuenta.
+
+Backend disponibles (en orden de preferencia):
+  1. whisper-cli.exe (Vulkan/GPU) — si se proporciona ``whisper_cli_exe``.
+  2. pywhispercpp   (CPU)         — fallback cuando no hay binario.
 """
 
 from __future__ import annotations
@@ -9,6 +13,9 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import struct
+import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -42,17 +49,144 @@ class _Request:
     future: "queue.Queue[TranscriptionResult]" = field(compare=False)
 
 
-class TranscriptionService:
-    """Una única instancia Whisper atendida por un worker priorizado."""
+# ---------------------------------------------------------------------------
+# Helpers para escribir WAV desde numpy sin depender de scipy/soundfile
+# ---------------------------------------------------------------------------
 
-    def __init__(self, model_path: str, *, n_threads: int = 4,
-                 language: str = "es", model: Any = None):
+def _write_wav(path: str, samples: Any, sample_rate: int = 16000) -> None:
+    """Escribe un WAV mono float32→int16 a *path*."""
+    try:
+        import numpy as np
+        data = np.ascontiguousarray(samples, dtype=np.float32)
+        # Clamp y convertir a int16 (PCM 16-bit)
+        data = np.clip(data, -1.0, 1.0)
+        pcm = (data * 32767).astype(np.int16)
+        raw = pcm.tobytes()
+    except ImportError:
+        # Sin numpy, asumimos que ya es bytes PCM int16
+        raw = bytes(samples) if not isinstance(samples, (bytes, bytearray)) else samples
+
+    n_channels = 1
+    sampwidth = 2  # int16 = 2 bytes
+    n_frames = len(raw) // sampwidth
+    data_size = len(raw)
+    riff_size = 36 + data_size
+
+    with open(path, "wb") as f:
+        # RIFF header
+        f.write(b"RIFF")
+        f.write(struct.pack("<I", riff_size))
+        f.write(b"WAVE")
+        # fmt chunk
+        f.write(b"fmt ")
+        f.write(struct.pack("<I", 16))          # chunk size
+        f.write(struct.pack("<H", 1))           # PCM
+        f.write(struct.pack("<H", n_channels))
+        f.write(struct.pack("<I", sample_rate))
+        f.write(struct.pack("<I", sample_rate * n_channels * sampwidth))  # byte rate
+        f.write(struct.pack("<H", n_channels * sampwidth))                # block align
+        f.write(struct.pack("<H", sampwidth * 8))                         # bits per sample
+        # data chunk
+        f.write(b"data")
+        f.write(struct.pack("<I", data_size))
+        f.write(raw)
+
+
+# ---------------------------------------------------------------------------
+# Transcripción vía whisper-cli.exe (Vulkan GPU)
+# ---------------------------------------------------------------------------
+
+def _transcribe_via_cli(
+    cli_exe: str,
+    model_path: str,
+    audio: Any,
+    *,
+    language: str = "es",
+    n_threads: int = 4,
+) -> str:
+    """Invoca whisper-cli.exe con el audio como WAV temporal y devuelve el texto."""
+    # Escribir WAV temporal
+    fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="trace_asr_")
+    os.close(fd)
+    try:
+        _write_wav(wav_path, audio)
+
+        cmd = [
+            cli_exe,
+            "-m", model_path,
+            "-f", wav_path,
+            "-l", language,
+            "-t", str(n_threads),
+            "--no-timestamps",
+            "--no-prints",
+        ]
+        logger.debug("[TRACE-ASR] CLI cmd: %s", " ".join(cmd))
+
+        # Directorio del exe para que encuentre las DLLs Vulkan
+        cwd = os.path.dirname(cli_exe)
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            timeout=120,
+        )
+        stderr_out = result.stderr.decode("utf-8", errors="replace")
+        if result.returncode != 0:
+            # whisper-cli retorna 1 incluso en éxito si hay warnings de Vulkan
+            # Solo es error real si stdout está vacío Y stderr tiene "error"
+            if "error" in stderr_out.lower() and not result.stdout.strip():
+                raise RuntimeError(
+                    f"whisper-cli falló (rc={result.returncode}): {stderr_out[:300]}"
+                )
+
+        # Intentar UTF-8 primero; si falla usar cp1252 (OEM Windows)
+        try:
+            text = result.stdout.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            text = result.stdout.decode("cp1252", errors="replace").strip()
+        if stderr_out:
+            logger.debug("[TRACE-ASR] stderr: %s", stderr_out[:200])
+        return text
+    finally:
+        try:
+            os.unlink(wav_path)
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Servicio principal
+# ---------------------------------------------------------------------------
+
+class TranscriptionService:
+    """Una única instancia Whisper atendida por un worker priorizado.
+
+    Si se proporciona *whisper_cli_exe*, la transcripción se realiza mediante
+    el binario nativo compilado con soporte Vulkan (GPU).  En caso contrario,
+    se utiliza pywhispercpp como fallback (CPU).
+    """
+
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        n_threads: int = 4,
+        language: str = "es",
+        model: Any = None,
+        whisper_cli_exe: Optional[str] = None,
+    ):
         self.model_path = model_path
         self.n_threads = int(n_threads or 4)
         self.language = language
+        self.whisper_cli_exe = whisper_cli_exe
+
+        # Estado del backend CPU (pywhispercpp), solo se carga si no hay CLI
         self._model = model
         self._model_lock = threading.Lock()
         self._model_load_failed = False
+
         self._queue: "queue.PriorityQueue[_Request]" = queue.PriorityQueue()
         self._sequence = 0
         self._sequence_lock = threading.Lock()
@@ -61,7 +195,20 @@ class TranscriptionService:
                                         name="trace-transcription")
         self._worker.start()
 
+        if self.whisper_cli_exe:
+            logger.info(
+                "[TRACE-ASR] Backend: whisper-cli (Vulkan) → %s",
+                self.whisper_cli_exe,
+            )
+        else:
+            logger.info("[TRACE-ASR] Backend: pywhispercpp (CPU)")
+
+    # ------------------------------------------------------------------
+    # Backend CPU (fallback)
+    # ------------------------------------------------------------------
+
     def _get_model(self):
+        """Carga pywhispercpp (CPU). Solo se usa cuando no hay CLI."""
         if self._model is not None or self._model_load_failed:
             return self._model
         with self._model_lock:
@@ -80,7 +227,7 @@ class TranscriptionService:
                     print_progress=False,
                     print_timestamps=False,
                 )
-                logger.info("[TRACE-ASR] Modelo Whisper cargado: %s",
+                logger.info("[TRACE-ASR] Modelo Whisper (CPU) cargado: %s",
                             os.path.basename(self.model_path))
             except Exception as exc:
                 self._model_load_failed = True
@@ -88,9 +235,17 @@ class TranscriptionService:
                              exc_info=True)
         return self._model
 
-    def submit(self, audio: Any, *, source: str = "meeting",
-               priority: TranscriptionPriority = TranscriptionPriority.MEETING
-               ) -> "queue.Queue[TranscriptionResult]":
+    # ------------------------------------------------------------------
+    # API pública
+    # ------------------------------------------------------------------
+
+    def submit(
+        self,
+        audio: Any,
+        *,
+        source: str = "meeting",
+        priority: TranscriptionPriority = TranscriptionPriority.MEETING,
+    ) -> "queue.Queue[TranscriptionResult]":
         """Encola audio y devuelve una cola con exactamente un resultado."""
         result_queue: "queue.Queue[TranscriptionResult]" = queue.Queue(maxsize=1)
         with self._sequence_lock:
@@ -100,12 +255,20 @@ class TranscriptionService:
                                  result_queue))
         return result_queue
 
-    def transcribe(self, audio: Any, *, source: str = "interactive",
-                   priority: TranscriptionPriority = TranscriptionPriority.INTERACTIVE
-                   ) -> TranscriptionResult:
+    def transcribe(
+        self,
+        audio: Any,
+        *,
+        source: str = "interactive",
+        priority: TranscriptionPriority = TranscriptionPriority.INTERACTIVE,
+    ) -> TranscriptionResult:
         """API bloqueante para consumidores que necesitan el texto."""
         result_queue = self.submit(audio, source=source, priority=priority)
         return result_queue.get()
+
+    # ------------------------------------------------------------------
+    # Worker interno
+    # ------------------------------------------------------------------
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -115,24 +278,54 @@ class TranscriptionService:
                 continue
             try:
                 started = time.perf_counter()
-                model = self._get_model()
-                if model is None:
-                    result = TranscriptionResult(
-                        "", request.source, error="whisper_unavailable")
-                else:
+
+                if self.whisper_cli_exe:
+                    # ── Backend GPU (Vulkan) ──────────────────────────
                     try:
-                        import numpy as np
-                        audio = np.ascontiguousarray(request.audio, dtype=np.float32)
-                    except ImportError:
-                        # Permite probar/integrar backends que ya normalizan
-                        # el audio sin obligar al núcleo base a instalar numpy.
-                        audio = request.audio
-                    text = " ".join(
-                        segment.text for segment in model.transcribe(audio)
-                        if getattr(segment, "text", "").strip()).strip()
-                    result = TranscriptionResult(
-                        text, request.source,
-                        duration_seconds=time.perf_counter() - started)
+                        text = _transcribe_via_cli(
+                            self.whisper_cli_exe,
+                            self.model_path,
+                            request.audio,
+                            language=self.language,
+                            n_threads=self.n_threads,
+                        )
+                        elapsed = time.perf_counter() - started
+                        logger.info(
+                            "[TRACE-ASR] Transcripción GPU completada en %.2fs: %r",
+                            elapsed, text[:80],
+                        )
+                        result = TranscriptionResult(
+                            text, request.source,
+                            duration_seconds=elapsed,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "[TRACE-ASR] Error en backend CLI: %s", exc,
+                            exc_info=True,
+                        )
+                        result = TranscriptionResult(
+                            "", request.source, error=str(exc))
+                else:
+                    # ── Backend CPU (pywhispercpp) ────────────────────
+                    model = self._get_model()
+                    if model is None:
+                        result = TranscriptionResult(
+                            "", request.source, error="whisper_unavailable")
+                    else:
+                        try:
+                            import numpy as np
+                            audio = np.ascontiguousarray(
+                                request.audio, dtype=np.float32)
+                        except ImportError:
+                            audio = request.audio
+                        text = " ".join(
+                            segment.text for segment in model.transcribe(audio)
+                            if getattr(segment, "text", "").strip()
+                        ).strip()
+                        result = TranscriptionResult(
+                            text, request.source,
+                            duration_seconds=time.perf_counter() - started)
+
                 request.future.put(result)
             except Exception as exc:
                 logger.error("[TRACE-ASR] Error transcribiendo %s: %s",
