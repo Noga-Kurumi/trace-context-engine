@@ -154,24 +154,28 @@ def _active_window_info() -> str:
         return ""
 
 
-def _ocr_screen_text(max_chars: int = 2000) -> str:
+def _ocr_screen_text(max_chars: int = 800) -> str:
     """OCR WinRT del monitor principal a resolución nativa ('' si falla).
 
-    Corre en el hilo llamante (el tool executor del provider): ocr_image
-    maneja su propio async/WinRT internamente, como hacía api_brain.
+    Optimizado: sanitiza espacios múltiples y acota a max_chars (800) para no
+    inflar el prefill del LLM.
     """
-    from mss import mss
     from PIL import Image
-
-    from trace_engine.collectors.screen_ocr import ocr_image
-
-    with mss() as sct:
-        real = sct.monitors[1:]
-        monitor = next(
-            (m for m in real if m["left"] == 0 and m["top"] == 0), real[0])
-        sct_img = sct.grab(monitor)
-        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-    return " ".join(ocr_image(img).split())[:max_chars]
+    try:
+        from mss import mss
+        with mss() as sct:
+            real = sct.monitors[1:]
+            monitor = next(
+                (m for m in real if m["left"] == 0 and m["top"] == 0), real[0])
+            sct_img = sct.grab(monitor)
+            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+        raw_text = ocr_image(img)
+        # Sanitizar: remover líneas/espacios repetidos
+        clean_text = " ".join(raw_text.split())
+        return clean_text[:max_chars]
+    except Exception as e:
+        logger.debug("[SCREEN] Fallo captura de pantalla para OCR: %s", e)
+        return ""
 
 
 def get_screen_context_text() -> str:

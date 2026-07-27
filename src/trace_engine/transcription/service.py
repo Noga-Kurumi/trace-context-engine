@@ -111,9 +111,10 @@ def _transcribe_via_cli(
     try:
         _write_wav(wav_path, audio)
 
+        abs_model = os.path.abspath(model_path)
         cmd = [
             cli_exe,
-            "-m", model_path,
+            "-m", abs_model,
             "-f", wav_path,
             "-l", language,
             "-t", str(n_threads),
@@ -197,7 +198,7 @@ class TranscriptionService:
 
         if self.whisper_cli_exe:
             logger.info(
-                "[TRACE-ASR] Backend: whisper-cli (Vulkan) → %s",
+                "[TRACE-ASR] Backend: whisper-cli (Vulkan GPU warm) → %s",
                 self.whisper_cli_exe,
             )
         else:
