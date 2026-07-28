@@ -258,7 +258,7 @@ class MeetingAudioCollector:
     def _meeting_metadata(self) -> dict:
         """Obtiene metadatos opcionales sin acoplar TRACE a una app concreta."""
         if not callable(self._metadata_provider):
-            return ""
+            return {"channel_name": "", "participants": ""}
         try:
             metadata = self._metadata_provider() or {}
             participants = metadata.get("participants", "")
