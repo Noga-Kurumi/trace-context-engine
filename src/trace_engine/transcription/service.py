@@ -126,12 +126,14 @@ def _transcribe_via_cli(
         # Directorio del exe para que encuentre las DLLs Vulkan
         cwd = os.path.dirname(cli_exe)
 
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=cwd,
             timeout=120,
+            creationflags=creationflags,
         )
         stderr_out = result.stderr.decode("utf-8", errors="replace")
         if result.returncode != 0:

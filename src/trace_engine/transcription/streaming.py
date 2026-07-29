@@ -40,9 +40,12 @@ class StreamingTranscriber:
                    "--sample-rate", "16000", "--vad", "--step", "200",
                    "--length", "2000"]
             try:
+                creationflags = (
+                    subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                )
                 self._process = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE)
+                    stderr=subprocess.PIPE, creationflags=creationflags)
                 self._reader = threading.Thread(
                     target=self._read_output, args=(self._process, callback),
                     daemon=True, name="trace-whisper-stream")
