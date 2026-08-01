@@ -120,6 +120,9 @@ def _transcribe_via_cli(
             "-t", str(n_threads),
             "--no-timestamps",
             "--no-prints",
+            "-bs", "1",
+            "-bo", "1",
+            "-fa",
         ]
         logger.debug("[TRACE-ASR] CLI cmd: %s", " ".join(cmd))
 

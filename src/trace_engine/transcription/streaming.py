@@ -94,7 +94,14 @@ class StreamingTranscriber:
             return
         for raw in iter(process.stdout.readline, b""):
             text = raw.decode("utf-8", errors="ignore").strip()
-            if text and not text.startswith("["):
+            # Whisper stream outputs lines like: [00:00:00.000 --> 00:00:01.000] Hello
+            if text.startswith("[") and "-->" in text and "]" in text:
+                text = text.split("]", 1)[1].strip()
+            elif text.startswith("["):
+                # Ignorar otras líneas de depuración que empiezan con [
+                continue
+                
+            if text:
                 callback(text)
 
     @staticmethod
