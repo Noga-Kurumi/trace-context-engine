@@ -93,6 +93,59 @@ def _write_wav(path: str, samples: Any, sample_rate: int = 16000) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Multiprocessing Worker (Aislamiento de pywhispercpp)
+# ---------------------------------------------------------------------------
+
+_mp_model = None
+
+def _init_mp_worker(model_path: str, n_threads: int, language: str) -> None:
+    """Inicializador del proceso hijo. Carga pywhispercpp y su ggml.dll aislado."""
+    global _mp_model
+    import logging
+    log = logging.getLogger(__name__)
+    try:
+        from pywhispercpp.model import Model
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(model_path)
+        _mp_model = Model(
+            model_path,
+            n_threads=n_threads,
+            language=language,
+            print_realtime=False,
+            print_progress=False,
+            print_timestamps=False,
+        )
+        log.info("[TRACE-ASR] Worker pywhispercpp inicializado con éxito.")
+    except Exception as exc:
+        log.error("[TRACE-ASR] Error inicializando Worker pywhispercpp: %s", exc, exc_info=True)
+        _mp_model = None
+
+
+def _transcribe_mp_worker(audio: Any) -> str:
+    """Ejecuta la transcripción en el proceso hijo usando el modelo global."""
+    global _mp_model
+    if _mp_model is None:
+        raise RuntimeError("El modelo pywhispercpp no se inicializó correctamente en el worker.")
+    
+    try:
+        import numpy as np
+        audio_data = np.ascontiguousarray(audio, dtype=np.float32)
+    except ImportError:
+        audio_data = audio
+
+    text = " ".join(
+        segment.text for segment in _mp_model.transcribe(audio_data)
+        if getattr(segment, "text", "").strip()
+    ).strip()
+    return text
+
+
+def _dummy_mp_worker() -> None:
+    """Tarea vacía utilizada para forzar la inicialización temprana del pool."""
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Transcripción vía whisper-cli.exe (Vulkan GPU)
 # ---------------------------------------------------------------------------
 
@@ -188,58 +241,46 @@ class TranscriptionService:
         self.language = language
         self.whisper_cli_exe = whisper_cli_exe
 
-        # Estado del backend CPU (pywhispercpp), solo se carga si no hay CLI
-        self._model = model
-        self._model_lock = threading.Lock()
-        self._model_load_failed = False
-
         self._queue: "queue.PriorityQueue[_Request]" = queue.PriorityQueue()
         self._sequence = 0
         self._sequence_lock = threading.Lock()
         self._stop = threading.Event()
         self._worker = threading.Thread(target=self._run, daemon=True,
                                         name="trace-transcription")
-        self._worker.start()
-
-        if self.whisper_cli_exe:
+        
+        self._pool = None
+        if not self.whisper_cli_exe:
+            # Backend CPU (pywhispercpp aislado en proceso)
+            import multiprocessing as mp
+            import concurrent.futures
+            # Usamos spawn para aislar el entorno (sin librerías previamente cargadas)
+            ctx = mp.get_context("spawn")
+            self._pool = concurrent.futures.ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=ctx,
+                initializer=_init_mp_worker,
+                initargs=(self.model_path, self.n_threads, self.language)
+            )
+            # Forzar inicialización temprana enviando una tarea vacía (warm-up)
+            self._warmup_future = self._pool.submit(_dummy_mp_worker)
+            logger.info("[TRACE-ASR] Backend: pywhispercpp (CPU) en proceso aislado (warm-up encolado)")
+        else:
             logger.info(
                 "[TRACE-ASR] Backend: whisper-cli (Vulkan GPU warm) → %s",
                 self.whisper_cli_exe,
             )
-        else:
-            logger.info("[TRACE-ASR] Backend: pywhispercpp (CPU)")
 
-    # ------------------------------------------------------------------
-    # Backend CPU (fallback)
-    # ------------------------------------------------------------------
+        self._worker.start()
 
-    def _get_model(self):
-        """Carga pywhispercpp (CPU). Solo se usa cuando no hay CLI."""
-        if self._model is not None or self._model_load_failed:
-            return self._model
-        with self._model_lock:
-            if self._model is not None or self._model_load_failed:
-                return self._model
+    def wait_for_warmup(self, timeout: Optional[float] = None) -> bool:
+        """Bloquea hasta que el proceso aislado haya inicializado Whisper."""
+        if hasattr(self, "_warmup_future") and self._warmup_future is not None:
             try:
-                if not os.path.exists(self.model_path):
-                    raise FileNotFoundError(self.model_path)
-                from pywhispercpp.model import Model
-
-                self._model = Model(
-                    self.model_path,
-                    n_threads=self.n_threads,
-                    language=self.language,
-                    print_realtime=False,
-                    print_progress=False,
-                    print_timestamps=False,
-                )
-                logger.info("[TRACE-ASR] Modelo Whisper (CPU) cargado: %s",
-                            os.path.basename(self.model_path))
-            except Exception as exc:
-                self._model_load_failed = True
-                logger.error("[TRACE-ASR] No se pudo cargar Whisper: %s", exc,
-                             exc_info=True)
-        return self._model
+                self._warmup_future.result(timeout=timeout)
+                return True
+            except Exception:
+                return False
+        return True
 
     # ------------------------------------------------------------------
     # API pública
@@ -312,25 +353,12 @@ class TranscriptionService:
                         result = TranscriptionResult(
                             "", request.source, error=str(exc))
                 else:
-                    # ── Backend CPU (pywhispercpp) ────────────────────
-                    model = self._get_model()
-                    if model is None:
-                        result = TranscriptionResult(
-                            "", request.source, error="whisper_unavailable")
-                    else:
-                        try:
-                            import numpy as np
-                            audio = np.ascontiguousarray(
-                                request.audio, dtype=np.float32)
-                        except ImportError:
-                            audio = request.audio
-                        text = " ".join(
-                            segment.text for segment in model.transcribe(audio)
-                            if getattr(segment, "text", "").strip()
-                        ).strip()
-                        result = TranscriptionResult(
-                            text, request.source,
-                            duration_seconds=time.perf_counter() - started)
+                    # ── Backend CPU (pywhispercpp aislado) ────────────
+                    future = self._pool.submit(_transcribe_mp_worker, request.audio)
+                    text = future.result()
+                    result = TranscriptionResult(
+                        text, request.source,
+                        duration_seconds=time.perf_counter() - started)
 
                 request.future.put(result)
             except Exception as exc:
